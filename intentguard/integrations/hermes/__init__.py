@@ -1,9 +1,14 @@
 """Native Hermes adapter for the Continuous Anti-Deception Supervisor.
 
+The adapter is designed to be always-on once installed. It does not require the
+human to invoke a special command or use voice. Direct text typed into Hermes is
+captured as authoritative human intent through pre_llm_call, while voice-origin
+instructions can enter the same shared session state through a voice frontend.
+
 This plugin does not trust Hermes' self-report as the source of truth. It taps
 Hermes' native lifecycle/tool hooks so the supervisor sees the actual runtime
-trajectory: attempted tool calls, tool arguments, actual tool results, session
-context, subagent lifecycle, and final outputs.
+trajectory: human input, attempted tool calls, tool arguments, actual tool
+results, session context, subagent lifecycle, and final outputs.
 
 Set INTENTGUARD_SUPERVISOR_URL to an HTTP service implementing:
   POST /event -> {"action":"allow"|"block"|"intervene", "message":"..."}
@@ -44,7 +49,7 @@ def _post(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def register(ctx):
-    """Register the anti-deception observation plane using native Hermes hooks."""
+    """Register the always-on anti-deception observation plane."""
 
     def emit(kind: str, **payload):
         return _post({"source": "hermes_runtime", "kind": kind, **payload})
@@ -95,6 +100,21 @@ def register(ctx):
         platform: str = "",
         **kwargs,
     ):
+        # Direct text typed into Hermes is authoritative human intent. This
+        # event is emitted independently of whether the optional voice frontend
+        # is running, so supervision is always active in text-only use.
+        if user_message:
+            emit(
+                "HUMAN_INPUT_CAPTURED",
+                session_id=session_id,
+                input_source="hermes_text",
+                text=user_message,
+                is_first_turn=is_first_turn,
+                model=model,
+                platform=platform,
+                runtime=kwargs,
+            )
+
         decision = emit(
             "LLM_TURN_START",
             session_id=session_id,
